@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 import torch
 
-from .model import DISPLAY
+from .model import PreparedImage, to_display
 
 LEVELS = ["upper", "mid", "lower"]
 # PSPNet target names are anatomical (patient's) left/right. On a standard
@@ -24,13 +24,12 @@ OUTSIDE = "Outside lungs"
 
 
 @torch.no_grad()
-def lung_masks(seg_model: torch.nn.Module, x_seg: torch.Tensor) -> dict[str, np.ndarray]:
-    out = seg_model(x_seg)[0]
+def lung_masks(seg_model: torch.nn.Module, prep: PreparedImage) -> dict[str, np.ndarray]:
+    out = seg_model(prep.x_seg)[0]
     masks = {}
     for target, side in LUNGS.items():
         logits = out[seg_model.targets.index(target)].numpy()
-        m = cv2.resize((logits > 0).astype(np.uint8), (DISPLAY, DISPLAY),
-                       interpolation=cv2.INTER_NEAREST)
+        m = (to_display((logits > 0).astype(np.uint8), prep, cv2.INTER_NEAREST) > 0.5).astype(np.uint8)
         masks[side] = _largest_component(m)
     return masks
 

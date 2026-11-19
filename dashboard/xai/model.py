@@ -1,9 +1,19 @@
 """Model loading, image I/O and preprocessing.
 
-Every spatial map in the dashboard (heatmaps, lung masks, ground-truth masks)
-lives in one shared "model frame": the center-cropped square of the original
-X-ray, resized to DISPLAY x DISPLAY. That keeps overlays aligned no matter
-which method or resolution produced them.
+Two coordinate frames:
+  * model frame   — the square the networks see (224 for the classifier,
+                    512 for the lung segmenter), built per INPUT_MODE.
+  * display frame — the WHOLE film at its true aspect ratio, long side DISPLAY.
+Every spatial map (heatmaps, lung masks, radiologist masks) is shown in the
+display frame; `to_display` maps model-frame maps there exactly, so clinicians
+always see undistorted anatomy whatever the model was fed.
+
+INPUT_MODE was chosen by measurement on CheXlocalize validation (202 frontal
+films, mostly landscape). AUROC per finding, center-crop / pad / stretch:
+  consolidation .846/.863/.890 · lung opacity .859/.873/.879 · effusion .844/.851/.864
+  atelectasis .804/.827/.832 · edema .859/.858/.859
+Center-cropping (torchxrayvision's default) cut off up to ~18% of the lung
+fields on wide films, so it is not offered.
 """
 from __future__ import annotations
 
@@ -41,13 +51,23 @@ def friendly(name: str) -> str:
     return FRIENDLY.get(name, name.replace("_", " "))
 
 
+INPUT_MODE = "stretch"  # "stretch" (best measured) | "pad"
+# Bump whenever preprocessing or cached data shapes change: it is part of every
+# Streamlit cache key, so a running server never serves results from older code.
+PIPELINE_VERSION = f"3-{INPUT_MODE}"
+
+
 @dataclass
 class PreparedImage:
-    display: np.ndarray      # uint8 [DISPLAY, DISPLAY], center-cropped
+    display: np.ndarray      # uint8 [H_d, W_d], whole film at true aspect, long side DISPLAY
     x: torch.Tensor          # [1, 1, 224, 224], xrv-normalized ([-1024, 1024])
     x_seg: torch.Tensor      # [1, 1, 512, 512], xrv-normalized
-    crop_box: tuple[int, int, int, int]  # (top, left, size, size) in original pixels
     orig_shape: tuple[int, int]
+    mode: str = INPUT_MODE
+
+    @property
+    def display_shape(self) -> tuple[int, int]:
+        return self.display.shape[:2]
 
 
 # ---------------------------------------------------------------- models
@@ -84,17 +104,29 @@ def read_image(src: str | Path | bytes, name: str = "") -> np.ndarray:
     return np.asarray(img, dtype=np.uint8)
 
 
-def center_crop_box(shape: tuple[int, int]) -> tuple[int, int, int, int]:
+def display_size(shape: tuple[int, int]) -> tuple[int, int]:
+    """(width, height) of the display frame for an image of `shape` (h, w)."""
     h, w = shape
-    s = min(h, w)
-    return (h - s) // 2, (w - s) // 2, s, s
+    k = DISPLAY / max(h, w)
+    return max(1, round(w * k)), max(1, round(h * k))
 
 
-def to_frame(arr: np.ndarray, box: tuple[int, int, int, int], size: int = DISPLAY,
-             interp: int = cv2.INTER_AREA) -> np.ndarray:
-    """Crop `arr` (same shape as the original image) with `box` and resize to the frame."""
-    t, l, h, w = box
-    return cv2.resize(arr[t:t + h, l:l + w], (size, size), interpolation=interp)
+def _pad_box(shape: tuple[int, int]) -> tuple[int, int, int, int]:
+    """Where the film sits inside its zero-padded square: (top, left, h, w) as pixels of a side-max square."""
+    h, w = shape
+    s = max(h, w)
+    return (s - h) // 2, (s - w) // 2, h, w
+
+
+def _model_square(gray: np.ndarray, mode: str) -> np.ndarray:
+    if mode == "stretch":
+        return gray  # resized straight to a square below (aspect is distorted, nothing is lost)
+    if mode == "pad":
+        t, l, h, w = _pad_box(gray.shape)
+        out = np.zeros((max(gray.shape),) * 2, np.uint8)
+        out[t:t + h, l:l + w] = gray
+        return out
+    raise ValueError(mode)
 
 
 def _normalize(gray: np.ndarray, res: int) -> torch.Tensor:
@@ -102,16 +134,30 @@ def _normalize(gray: np.ndarray, res: int) -> torch.Tensor:
     return torch.from_numpy(xrv.datasets.normalize(resized, 255))[None, None]
 
 
-def prepare(gray: np.ndarray) -> PreparedImage:
-    box = center_crop_box(gray.shape)
-    square = to_frame(gray, box, size=max(DISPLAY, SEG_RES))
+def prepare(gray: np.ndarray, mode: str = INPUT_MODE) -> PreparedImage:
+    sq = _model_square(gray, mode)
     return PreparedImage(
-        display=cv2.resize(square, (DISPLAY, DISPLAY), interpolation=cv2.INTER_AREA),
-        x=_normalize(square, MODEL_RES),
-        x_seg=_normalize(square, SEG_RES),
-        crop_box=box,
-        orig_shape=gray.shape,
-    )
+        display=cv2.resize(gray, display_size(gray.shape), interpolation=cv2.INTER_AREA),
+        x=_normalize(sq, MODEL_RES), x_seg=_normalize(sq, SEG_RES),
+        orig_shape=gray.shape, mode=mode)
+
+
+def to_display(m: np.ndarray, prep: PreparedImage, interp: int = cv2.INTER_CUBIC) -> np.ndarray:
+    """Map a square model-frame map (any resolution) onto the display frame."""
+    w_d, h_d = display_size(prep.orig_shape)
+    m = m.astype(np.float32)
+    if prep.mode == "pad":
+        n = m.shape[0]
+        s = max(prep.orig_shape)
+        t, l, h, w = (round(v * n / s) for v in _pad_box(prep.orig_shape))
+        m = m[t:t + max(h, 1), l:l + max(w, 1)]
+    return cv2.resize(m, (w_d, h_d), interpolation=interp)
+
+
+def orig_to_display(m: np.ndarray, prep: PreparedImage) -> np.ndarray:
+    """Map a mask in original-image pixels onto the display frame."""
+    w_d, h_d = display_size(prep.orig_shape)
+    return cv2.resize(m.astype(np.uint8), (w_d, h_d), interpolation=cv2.INTER_NEAREST).astype(bool)
 
 
 # ---------------------------------------------------------------- inference

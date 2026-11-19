@@ -27,7 +27,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from .model import DISPLAY, to_frame
+from .model import PreparedImage, orig_to_display
 
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_ROOT = REPO / "data" / "chexlocalize"
@@ -143,8 +143,8 @@ def _decode(rle: dict) -> np.ndarray:
     return mask_utils.decode(rle).astype(bool)
 
 
-def gt_mask(image_id: str, split: str, crop_box, orig_shape, root: Path | None = None) -> np.ndarray | None:
-    """Union of Consolidation + Airspace Opacity masks in the DISPLAY frame, or None."""
+def gt_mask(image_id: str, split: str, prep: PreparedImage, root: Path | None = None) -> np.ndarray | None:
+    """Union of Consolidation + Airspace Opacity masks in the display frame, or None."""
     entry = _gt_json(str(root or data_root()), split).get(image_id)
     if not entry:
         return None
@@ -155,6 +155,5 @@ def gt_mask(image_id: str, split: str, crop_box, orig_shape, root: Path | None =
             union = m if union is None else (union | m)
     if union is None or not union.any():
         return None
-    if union.shape != tuple(orig_shape):
-        union = cv2.resize(union.astype(np.uint8), orig_shape[::-1], interpolation=cv2.INTER_NEAREST)
-    return to_frame(union.astype(np.uint8), crop_box, DISPLAY, cv2.INTER_NEAREST).astype(bool)
+    # masks are at the original acquisition size; same aspect as our image, so resizing aligns them
+    return orig_to_display(union, prep)

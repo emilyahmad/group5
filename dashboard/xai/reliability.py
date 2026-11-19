@@ -14,6 +14,8 @@ STATIC_LIMITS = [
     "Sees **one frontal image only**: no lateral view, no prior films for comparison.",
     "Has **no clinical context**: no symptoms, vitals (SpO₂, temperature, RR), labs "
     "(WBC, CRP) or history. Pneumonia is a clinical diagnosis; this score is image evidence only.",
+    "**Was never checked against pneumonia labels here.** The reference set has none; accuracy is "
+    "measured against radiologist consolidation/opacity labels as a stand-in.",
     "Cannot distinguish pneumonia from other causes of airspace opacity "
     "(oedema, haemorrhage, atelectasis, aspiration) on imaging alone.",
     "Trained on adult public datasets (NIH, CheXpert, MIMIC, PadChest, RSNA, …); "
@@ -49,10 +51,11 @@ def per_image_flags(meta: dict, ood: float, cohort_ood: np.ndarray | None,
         pct = float((cohort_ood < ood).mean() * 100)
         if pct >= ood_pct_warn:
             flags.append(Flag("warn", f"**Unusual image** — less typical than {pct:.0f}% of the "
-                                      "cohort (autoencoder check). Interpret the score with caution."))
+                                      "reference films (autoencoder check). Interpret the score with caution."))
         else:
-            flags.append(Flag("info", f"Image looks typical for the training data "
-                                      f"(atypicality percentile {pct:.0f})."))
+            flags.append(Flag("info", f"Image is within the typical range of the reference films "
+                                      f"(atypicality percentile {pct:.0f}; this check is relative, "
+                                      "so 5% of films are always flagged)."))
     view = str(meta.get("ap_pa") or "").upper()
     if view == "AP":
         flags.append(Flag("warn", "**AP (often portable) film.** Projection and positioning "

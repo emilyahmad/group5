@@ -1,6 +1,12 @@
 [theme]
-# Navy accent (as in the TICICDS prototype). Red is reserved for "High likelihood".
-primaryColor = "#2b4c9b"
+# Stanford identity: Cardinal red accent, Stanford black text, warm light surfaces.
+# Red is shared by brand and "High likelihood"; High always carries ▲ + the word HIGH.
+base = "light"
+primaryColor = "#8C1515"
+backgroundColor = "#F7F6F2"
+secondaryBackgroundColor = "#EFEDE7"
+textColor = "#2E2D29"
+font = "sans serif"
 
 [browser]
 gatherUsageStats = false

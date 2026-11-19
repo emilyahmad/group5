@@ -21,6 +21,11 @@ Design rules taken from the papers: categories instead of raw probabilities;
 no red/green on values (TICICDS clinicians read it as the model's reasons);
 detail behind expanders (progressive disclosure).
 
+Styling uses Stanford identity colours (see `.streamlit/config.toml` and the
+palette constants at the top of `app.py`). Cardinal red is the brand colour and
+also marks *High likelihood*, which always carries a ▲ icon and the word HIGH.
+Orange/blue mean "raises/lowers likelihood" (a pair validated as colour-blind safe).
+
 ## Setup
 
 Use the Python environment that has the packages (e.g. Anaconda's

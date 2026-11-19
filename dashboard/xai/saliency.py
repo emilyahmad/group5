@@ -1,6 +1,6 @@
 """Saliency methods for a single pathology output.
 
-Each method returns a *signed* float map in the DISPLAY frame:
+Each method returns a *signed* float map in the display frame (true aspect):
 positive = evidence FOR the target finding, negative = evidence AGAINST.
 Grad-CAM is non-negative by construction.
 
@@ -16,7 +16,7 @@ import numpy as np
 import torch
 from captum.attr import IntegratedGradients, Occlusion
 
-from .model import DISPLAY, logit_head
+from .model import PreparedImage, logit_head, to_display
 
 METHODS = {
     "gradcam": "Grad-CAM",
@@ -34,8 +34,6 @@ METHOD_HELP = {
 }
 
 
-def _to_display(m: np.ndarray) -> np.ndarray:
-    return cv2.resize(m.astype(np.float32), (DISPLAY, DISPLAY), interpolation=cv2.INTER_CUBIC)
 
 
 def gradcam(model: torch.nn.Module, x: torch.Tensor, idx: int) -> np.ndarray:
@@ -44,7 +42,7 @@ def gradcam(model: torch.nn.Module, x: torch.Tensor, idx: int) -> np.ndarray:
     (grads,) = torch.autograd.grad(logit, feats)
     weights = grads.mean(dim=(2, 3), keepdim=True)
     cam = torch.relu((weights * feats).sum(1))[0].detach().numpy()
-    return np.clip(_to_display(cam), 0, None)
+    return np.clip(cam, 0, None)
 
 
 def _logit_fn(model, idx):
@@ -60,8 +58,7 @@ def integrated_gradients(model: torch.nn.Module, x: torch.Tensor, idx: int,
     attr = ig.attribute(x.clone().requires_grad_(True), baselines=baseline,
                         n_steps=steps, internal_batch_size=8)
     a = attr[0, 0].detach().numpy()
-    a = cv2.GaussianBlur(a, (0, 0), sigmaX=4)  # pixel-level IG is speckled; smooth for display
-    return _to_display(a)
+    return cv2.GaussianBlur(a, (0, 0), sigmaX=4)  # pixel-level IG is speckled; smooth for display
 
 
 def occlusion(model: torch.nn.Module, x: torch.Tensor, idx: int,
@@ -74,12 +71,14 @@ def occlusion(model: torch.nn.Module, x: torch.Tensor, idx: int,
     attr = occ.attribute(x, sliding_window_shapes=(1, window, window),
                          strides=(1, stride, stride), baselines=0.0,
                          perturbations_per_eval=32)
-    return _to_display(attr[0, 0].numpy())
+    return attr[0, 0].numpy()
 
 
-def compute(method: str, model: torch.nn.Module, x: torch.Tensor, idx: int) -> np.ndarray:
+def compute(method: str, model: torch.nn.Module, prep: PreparedImage, idx: int) -> np.ndarray:
+    """Saliency for output `idx`, mapped onto the display frame."""
     fn = {"gradcam": gradcam, "ig": integrated_gradients, "occlusion": occlusion}[method]
-    return fn(model, x, idx)
+    m = to_display(fn(model, prep.x, idx), prep)
+    return np.clip(m, 0, None) if method == "gradcam" else m
 
 
 # ---------------------------------------------------------------- display helpers
