@@ -1,0 +1,14 @@
+streamlit>=1.50
+torch
+torchvision
+torchxrayvision>=1.3
+captum
+plotly
+opencv-python
+scikit-learn
+pandas
+pyarrow
+pycocotools
+pydicom
+pillow
+numpy

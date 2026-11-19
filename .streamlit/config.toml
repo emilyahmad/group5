@@ -1,0 +1,6 @@
+[theme]
+# Navy accent (as in the TICICDS prototype). Red is reserved for "High likelihood".
+primaryColor = "#2b4c9b"
+
+[browser]
+gatherUsageStats = false
